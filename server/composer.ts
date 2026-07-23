@@ -250,7 +250,12 @@ async function chooseReaction(
 
 async function renderFinalVideo(
   id: string,
-  job: { original_path: string; position_x: number; position_y: number },
+  job: {
+    original_path: string;
+    position_x: number;
+    position_y: number;
+    reaction_scale: number;
+  },
   reaction: ReactionRow,
   info: VideoInfo,
   outputPath: string,
@@ -279,7 +284,8 @@ async function renderFinalVideo(
   const outputWidth = 1080;
   const outputHeight = 1920;
   const reactionInfo = await probeVideo(reaction.file_path);
-  const overlayHeight = Math.round((outputHeight * 0.34) / 2) * 2;
+  const safeScale = Math.max(0.18, Math.min(0.62, job.reaction_scale || 0.34));
+  const overlayHeight = Math.round((outputHeight * safeScale) / 2) * 2;
   const overlayWidth = Math.round(
     (overlayHeight * reactionInfo.width / reactionInfo.height) / 2,
   ) * 2;
@@ -308,8 +314,8 @@ async function renderFinalVideo(
       "-i",
       reactionCutPath,
       "-filter_complex",
-      `[0:v]scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease:` +
-        `flags=lanczos,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[base];` +
+      `[0:v]scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=increase:` +
+        `flags=lanczos,crop=${outputWidth}:${outputHeight},setsar=1[base];` +
         `[1:v]scale=${overlayWidth}:${overlayHeight}:flags=lanczos,format=rgba[reaction];` +
         `[base][reaction]overlay=${overlayX}:${overlayY}:format=auto:shortest=1[v]`,
       "-map",
@@ -364,19 +370,20 @@ async function renderFinalVideo(
 
 export async function composeReel(id: string) {
   const job = db
-    .prepare("SELECT original_path, position_x, position_y FROM compositions WHERE id = ?")
+    .prepare(
+      "SELECT original_path, position_x, position_y, reaction_scale FROM compositions WHERE id = ?",
+    )
     .get(id) as {
       original_path: string;
       position_x: number;
       position_y: number;
+      reaction_scale: number;
     } | undefined;
   if (!job) return;
 
   const jobDir = path.dirname(job.original_path);
   const framesDir = path.join(jobDir, "analysis");
   const reactionFramesDir = path.join(jobDir, "reaction-previews");
-  const outputPath = path.join(jobDir, "reels-com-reacao.mp4");
-  const reactionCutPath = path.join(jobDir, "reaction-cut.webm");
 
   try {
     const reactions = db
@@ -453,22 +460,19 @@ export async function composeReel(id: string) {
     if (!reaction) throw new Error("A reação escolhida não está mais disponível.");
     db.prepare(
       `UPDATE compositions
-       SET selected_reaction_id = ?, selection_reason = ?,
-           step = ?, progress = ?, updated_at = ?
+       SET selected_reaction_id = ?, selection_reason = ?, status = 'ready',
+           step = ?, progress = 60, updated_at = ?
        WHERE id = ?`,
     ).run(
       reaction.id,
       selection.reason,
-      `Reação escolhida: ${reaction.name}`,
-      58,
+      `Posicione a reação “${reaction.name}”`,
       new Date().toISOString(),
       id,
     );
 
-    await renderFinalVideo(id, job, reaction, info, outputPath, reactionCutPath);
     fs.rmSync(framesDir, { recursive: true, force: true });
     fs.rmSync(reactionFramesDir, { recursive: true, force: true });
-    fs.rmSync(reactionCutPath, { force: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha inesperada ao gerar o Reels.";
     updateComposition(id, "failed", 100, "Não foi possível gerar o vídeo", message.slice(0, 1000));
@@ -478,13 +482,14 @@ export async function composeReel(id: string) {
 export async function regenerateComposition(id: string, reactionId: string) {
   const job = db
     .prepare(
-      `SELECT original_path, position_x, position_y
+      `SELECT original_path, position_x, position_y, reaction_scale
        FROM compositions WHERE id = ?`,
     )
     .get(id) as {
       original_path: string;
       position_x: number;
       position_y: number;
+      reaction_scale: number;
     } | undefined;
   const reaction = db
     .prepare(

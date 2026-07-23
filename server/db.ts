@@ -2,7 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-export const DATA_ROOT = path.resolve(process.cwd(), "data");
+export const DATA_ROOT = path.resolve(
+  process.env.DATA_ROOT ||
+    process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+    path.join(process.cwd(), "data"),
+);
 export const STORAGE_ROOT = path.join(DATA_ROOT, "storage");
 export const INCOMING_ROOT = path.join(DATA_ROOT, "incoming");
 
@@ -61,6 +65,7 @@ db.exec(`
     selection_reason TEXT,
     position_x REAL NOT NULL DEFAULT 1,
     position_y REAL NOT NULL DEFAULT 1,
+    reaction_scale REAL NOT NULL DEFAULT 0.34,
     duration REAL NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'queued',
     progress INTEGER NOT NULL DEFAULT 0,
@@ -83,6 +88,9 @@ if (!compositionColumns.some((column) => column.name === "position_y")) {
 }
 if (!compositionColumns.some((column) => column.name === "selection_reason")) {
   db.exec("ALTER TABLE compositions ADD COLUMN selection_reason TEXT");
+}
+if (!compositionColumns.some((column) => column.name === "reaction_scale")) {
+  db.exec("ALTER TABLE compositions ADD COLUMN reaction_scale REAL NOT NULL DEFAULT 0.34");
 }
 
 db.prepare(
@@ -107,7 +115,7 @@ export type VideoRow = {
   id: string;
   original_name: string;
   duration: number;
-  status: "queued" | "processing" | "completed" | "failed";
+  status: "queued" | "processing" | "ready" | "completed" | "failed";
   progress: number;
   step: string;
   error: string | null;
@@ -139,14 +147,19 @@ export type CompositionRow = {
   selection_reason: string | null;
   position_x: number;
   position_y: number;
+  reaction_scale: number;
   duration: number;
-  status: "queued" | "processing" | "completed" | "failed";
+  status: "queued" | "processing" | "ready" | "completed" | "failed";
   progress: number;
   step: string;
   error: string | null;
   created_at: string;
   updated_at: string;
   reaction_name?: string;
+  reaction_emotion?: string;
+  reaction_file_path?: string;
+  reaction_start_time?: number;
+  reaction_end_time?: number;
 };
 
 export function mediaUrl(absolutePath: string | null) {

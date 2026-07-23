@@ -19,7 +19,11 @@ import {
 } from "lucide-react";
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const API = "http://localhost:8788";
+const API =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:8788"
+    : "";
 
 type VideoJob = {
   id: string;
@@ -50,16 +54,22 @@ type Composition = {
   id: string;
   originalName: string;
   duration: number;
-  status: "queued" | "processing" | "completed" | "failed";
+  status: "queued" | "processing" | "ready" | "completed" | "failed";
   progress: number;
   step: string;
   error: string | null;
   selectedReactionId: string | null;
   selectedReactionName: string | null;
+  selectedReactionEmotion: string | null;
   selectionReason: string | null;
   positionX: number;
   positionY: number;
+  reactionScale: number;
   outputUrl: string | null;
+  originalUrl: string;
+  reactionUrl: string | null;
+  reactionStart: number | null;
+  reactionEnd: number | null;
   createdAt: string;
 };
 
@@ -75,13 +85,14 @@ function formatTime(seconds: number) {
 }
 
 export default function ReactionStudio() {
-  const [activeView, setActiveView] = useState<"compose" | "reactions" | "library">("compose");
+  const [activeView, setActiveView] = useState<"compose" | "history" | "reactions" | "library">("compose");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [compositions, setCompositions] = useState<Composition[]>([]);
+  const [focusedCompositionId, setFocusedCompositionId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [engineOnline, setEngineOnline] = useState<boolean | null>(null);
@@ -188,6 +199,14 @@ export default function ReactionStudio() {
             Criar Reels
           </button>
           <button
+            className={activeView === "history" ? "active" : ""}
+            onClick={() => setActiveView("history")}
+          >
+            <Clock3 size={17} />
+            Histórico
+            {compositions.length > 0 && <span className="count-pill">{compositions.length}</span>}
+          </button>
+          <button
             className={activeView === "reactions" ? "active" : ""}
             onClick={() => setActiveView("reactions")}
           >
@@ -215,6 +234,17 @@ export default function ReactionStudio() {
           reactions={reactions}
           onRefresh={refresh}
           onOpenReactions={() => setActiveView("reactions")}
+          focusedCompositionId={focusedCompositionId}
+          setFocusedCompositionId={setFocusedCompositionId}
+        />
+      ) : activeView === "history" ? (
+        <CompositionHistory
+          compositions={compositions}
+          onRefresh={refresh}
+          onContinue={(id) => {
+            setFocusedCompositionId(id);
+            setActiveView("compose");
+          }}
         />
       ) : activeView === "reactions" ? (
         <>
@@ -421,11 +451,15 @@ function ReelComposer({
   reactions,
   onRefresh,
   onOpenReactions,
+  focusedCompositionId,
+  setFocusedCompositionId,
 }: {
   compositions: Composition[];
   reactions: Reaction[];
   onRefresh: () => Promise<void>;
   onOpenReactions: () => void;
+  focusedCompositionId: string | null;
+  setFocusedCompositionId: (id: string | null) => void;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -433,25 +467,32 @@ function ReelComposer({
   const [positionDragging, setPositionDragging] = useState(false);
   const [error, setError] = useState("");
   const [position, setPosition] = useState({ x: 1, y: 1 });
+  const [reactionScale, setReactionScale] = useState(0.34);
   const [replacementReactionId, setReplacementReactionId] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const placementRef = useRef<HTMLDivElement>(null);
-  const previewUrl = useMemo(
-    () => selectedFile ? URL.createObjectURL(selectedFile) : "",
-    [selectedFile],
-  );
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
   const reactionCount = reactions.length;
+  const focusedComposition = compositions.find((item) => item.id === focusedCompositionId);
+  const activeComposition =
+    focusedComposition?.status === "processing" || focusedComposition?.status === "queued"
+      ? focusedComposition
+      : undefined;
+  const readyComposition = focusedComposition?.status === "ready" ? focusedComposition : undefined;
+  const completedComposition =
+    focusedComposition?.status === "completed" && focusedComposition.outputUrl
+      ? focusedComposition
+      : undefined;
+  const previewReaction = reactions.find(
+    (reaction) => reaction.id === (replacementReactionId || readyComposition?.selectedReactionId),
+  );
+
   useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
-  const activeComposition = compositions.find(
-    (item) => item.status === "processing" || item.status === "queued",
-  );
-  const latestCompleted = compositions.find(
-    (item) => item.status === "completed" && item.outputUrl,
-  );
+    if (!readyComposition) return;
+    setPosition({ x: readyComposition.positionX, y: readyComposition.positionY });
+    setReactionScale(readyComposition.reactionScale || 0.34);
+    setReplacementReactionId(readyComposition.selectedReactionId || "");
+  }, [readyComposition?.id]);
 
   const chooseFile = (file?: File) => {
     setError("");
@@ -480,8 +521,9 @@ function ReelComposer({
     body.append("positionY", position.y.toFixed(4));
     try {
       const response = await fetch(`${API}/api/compositions`, { method: "POST", body });
-      const payload = await response.json() as { error?: string };
+      const payload = await response.json() as { id?: string; error?: string };
       if (!response.ok) throw new Error(payload.error || "Não foi possível enviar o Reels.");
+      if (payload.id) setFocusedCompositionId(payload.id);
       setSelectedFile(null);
       await onRefresh();
     } catch (uploadError) {
@@ -512,27 +554,38 @@ function ReelComposer({
     const stage = placementRef.current;
     if (!stage) return;
     const bounds = stage.getBoundingClientRect();
-    const overlayWidth = bounds.width * 0.34;
-    const overlayHeight = bounds.height * 0.34;
-    const left = Math.max(0, Math.min(bounds.width - overlayWidth, clientX - bounds.left - overlayWidth / 2));
-    const top = Math.max(0, Math.min(bounds.height - overlayHeight, clientY - bounds.top - overlayHeight / 2));
+    const overlayWidth = bounds.width * reactionScale;
+    const overlayHeight = bounds.height * reactionScale;
+    const left = Math.max(
+      0,
+      Math.min(bounds.width - overlayWidth, clientX - bounds.left - dragOffsetRef.current.x),
+    );
+    const top = Math.max(
+      0,
+      Math.min(bounds.height - overlayHeight, clientY - bounds.top - dragOffsetRef.current.y),
+    );
     setPosition({
       x: bounds.width > overlayWidth ? left / (bounds.width - overlayWidth) : 0,
       y: bounds.height > overlayHeight ? top / (bounds.height - overlayHeight) : 0,
     });
   };
 
-  const replaceReaction = async (composition: Composition) => {
+  const renderComposition = async (composition: Composition) => {
     const reactionId = replacementReactionId || composition.selectedReactionId;
     if (!reactionId) return;
     setError("");
-    const response = await fetch(`${API}/api/compositions/${composition.id}/reaction`, {
+    const response = await fetch(`${API}/api/compositions/${composition.id}/render`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reactionId }),
+      body: JSON.stringify({
+        reactionId,
+        positionX: position.x,
+        positionY: position.y,
+        reactionScale,
+      }),
     });
     const payload = await response.json() as { error?: string };
-    if (!response.ok) setError(payload.error || "Não foi possível trocar a reação.");
+    if (!response.ok) setError(payload.error || "Não foi possível gerar o vídeo.");
     await onRefresh();
   };
 
@@ -603,43 +656,6 @@ function ReelComposer({
               </>
             )}
           </div>
-          {selectedFile && previewUrl && (
-            <div className="placement-editor">
-              <div className="placement-copy">
-                <strong>Arraste a reação para escolher a posição</strong>
-                <small>Saída vertical 9:16 · 1080 × 1920</small>
-              </div>
-              <div
-                ref={placementRef}
-                className={`placement-stage ${positionDragging ? "dragging" : ""}`}
-                onPointerDown={(event) => {
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  setPositionDragging(true);
-                  moveReaction(event.clientX, event.clientY);
-                }}
-                onPointerMove={(event) => {
-                  if (positionDragging) moveReaction(event.clientX, event.clientY);
-                }}
-                onPointerUp={(event) => {
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                  setPositionDragging(false);
-                }}
-                onPointerCancel={() => setPositionDragging(false)}
-              >
-                <video src={previewUrl} muted playsInline controls preload="metadata" />
-                <div
-                  className="placement-reaction"
-                  style={{
-                    left: `${position.x * 66}%`,
-                    top: `${position.y * 66}%`,
-                  }}
-                >
-                  <span><WandSparkles size={19} /></span>
-                  Sua reação
-                </div>
-              </div>
-            </div>
-          )}
           {error && <p className="error-message">{error}</p>}
           <button
             className="primary-button"
@@ -655,7 +671,7 @@ function ReelComposer({
               ? "Salvando o Reels..."
               : activeComposition
                 ? "Um vídeo está sendo gerado"
-                : "Gerar Reels com reação"}
+                : "Analisar Reels e escolher reação"}
             {!uploading && !activeComposition && <ChevronRight size={18} />}
           </button>
         </article>
@@ -675,28 +691,126 @@ function ReelComposer({
                 <span style={{ width: `${activeComposition.progress}%` }} />
               </div>
             </div>
-          ) : latestCompleted ? (
+          ) : readyComposition ? (
+            <div className="final-video ready-preview">
+              <div className="result-heading">
+                <div>
+                  <span className="eyebrow"><Sparkles size={14} /> Prévia antes de gerar</span>
+                  <h2>{readyComposition.originalName}</h2>
+                </div>
+                <span className="emotion-tag">{previewReaction?.name}</span>
+              </div>
+              {readyComposition.selectionReason && (
+                <div className="selection-reason">
+                  <strong>Por que esta reação?</strong>
+                  <p>
+                    {replacementReactionId && replacementReactionId !== readyComposition.selectedReactionId
+                      ? "Esta reação foi escolhida manualmente por você."
+                      : readyComposition.selectionReason}
+                  </p>
+                </div>
+              )}
+              <div className="placement-copy">
+                <strong>Arraste a reação para qualquer posição</strong>
+                <small>Saída vertical 9:16 · 1080 × 1920</small>
+              </div>
+              <div
+                ref={placementRef}
+                className={`placement-stage actual-preview ${positionDragging ? "dragging" : ""}`}
+              >
+                <video
+                  src={`${API}${readyComposition.originalUrl}`}
+                  muted
+                  autoPlay
+                  loop
+                  playsInline
+                  preload="metadata"
+                />
+                {previewReaction && (
+                  <div
+                    className="placement-reaction actual"
+                    style={{
+                      width: `${reactionScale * 100}%`,
+                      left: `${position.x * (1 - reactionScale) * 100}%`,
+                      top: `${position.y * (1 - reactionScale) * 100}%`,
+                    }}
+                    onPointerDown={(event) => {
+                      const overlayBounds = event.currentTarget.getBoundingClientRect();
+                      dragOffsetRef.current = {
+                        x: event.clientX - overlayBounds.left,
+                        y: event.clientY - overlayBounds.top,
+                      };
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      setPositionDragging(true);
+                    }}
+                    onPointerMove={(event) => {
+                      if (positionDragging) moveReaction(event.clientX, event.clientY);
+                    }}
+                    onPointerUp={(event) => {
+                      event.currentTarget.releasePointerCapture(event.pointerId);
+                      setPositionDragging(false);
+                    }}
+                    onPointerCancel={() => setPositionDragging(false)}
+                  >
+                    <PlacementReactionPlayer reaction={previewReaction} />
+                  </div>
+                )}
+              </div>
+              <div className="reaction-size-control">
+                <div>
+                  <label htmlFor="reaction-size">Tamanho da reação</label>
+                  <strong>{Math.round(reactionScale * 100)}%</strong>
+                </div>
+                <input
+                  id="reaction-size"
+                  type="range"
+                  min="0.18"
+                  max="0.62"
+                  step="0.01"
+                  value={reactionScale}
+                  onChange={(event) => setReactionScale(Number(event.target.value))}
+                />
+              </div>
+              <div className="replace-reaction">
+                <label htmlFor="preview-reaction">Reação escolhida</label>
+                <select
+                  id="preview-reaction"
+                  value={replacementReactionId || readyComposition.selectedReactionId || ""}
+                  onChange={(event) => setReplacementReactionId(event.target.value)}
+                >
+                  {reactions.map((reaction) => (
+                    <option value={reaction.id} key={reaction.id}>
+                      {reaction.name} — {reaction.emotion}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className="download-final generate-final" onClick={() => void renderComposition(readyComposition)}>
+                <Sparkles size={18} /> Gerar vídeo nesta posição
+              </button>
+            </div>
+          ) : completedComposition ? (
             <div className="final-video">
               <div className="result-heading">
                 <div>
                   <span className="eyebrow"><Check size={14} /> Vídeo pronto</span>
-                  <h2>{latestCompleted.originalName}</h2>
+                  <h2>{completedComposition.originalName}</h2>
                 </div>
-                <span className="emotion-tag">{latestCompleted.selectedReactionName}</span>
+                <span className="emotion-tag">{completedComposition.selectedReactionName}</span>
               </div>
-              {latestCompleted.selectionReason && (
+              {completedComposition.selectionReason && (
                 <div className="selection-reason">
                   <strong>Por que esta reação?</strong>
-                  <p>{latestCompleted.selectionReason}</p>
+                  <p>{completedComposition.selectionReason}</p>
                 </div>
               )}
-              <video src={`${API}${latestCompleted.outputUrl}`} controls playsInline preload="metadata" />
+              <video src={`${API}${completedComposition.outputUrl}`} controls playsInline preload="metadata" />
               <div className="replace-reaction">
                 <label htmlFor="replacement-reaction">Trocar a reação</label>
                 <div>
                   <select
                     id="replacement-reaction"
-                    value={replacementReactionId || latestCompleted.selectedReactionId || ""}
+                    value={replacementReactionId || completedComposition.selectedReactionId || ""}
                     onChange={(event) => setReplacementReactionId(event.target.value)}
                   >
                     {reactions.map((reaction) => (
@@ -705,14 +819,14 @@ function ReelComposer({
                       </option>
                     ))}
                   </select>
-                  <button onClick={() => void replaceReaction(latestCompleted)}>
+                  <button onClick={() => void renderComposition(completedComposition)}>
                     <Sparkles size={16} /> Gerar novamente
                   </button>
                 </div>
               </div>
               <a
                 className="download-final"
-                href={`${API}${latestCompleted.outputUrl}`}
+                href={`${API}${completedComposition.outputUrl}`}
                 download="reels-com-reacao.mp4"
               >
                 <Download size={18} /> Baixar vídeo final
@@ -735,48 +849,125 @@ function ReelComposer({
         </article>
       </section>
 
-      {compositions.length > 0 && (
-        <section className="recent-section composition-history">
-          <div className="section-title">
-            <div>
-              <span className="eyebrow">Projetos locais</span>
-              <h2>Vídeos gerados</h2>
-            </div>
-          </div>
-          <div className="jobs-list">
-            {compositions.slice(0, 6).map((item) => (
-              <div className="job-row" key={item.id}>
-                <span className={`job-state ${item.status}`}>
-                  {item.status === "completed" ? <Check size={17} /> :
-                    item.status === "failed" ? <X size={17} /> :
-                    <LoaderCircle className="spin" size={17} />}
-                </span>
-                <div className="job-main">
-                  <strong>{item.originalName}</strong>
-                  <small>{item.error || item.step}</small>
-                </div>
+    </>
+  );
+}
+
+function PlacementReactionPlayer({ reaction }: { reaction: Reaction }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  return (
+    <video
+      ref={videoRef}
+      src={`${API}${reaction.videoUrl}`}
+      muted
+      autoPlay
+      playsInline
+      preload="auto"
+      onLoadedMetadata={() => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = reaction.start;
+          void videoRef.current.play();
+        }
+      }}
+      onTimeUpdate={() => {
+        const video = videoRef.current;
+        if (video && video.currentTime >= reaction.end) {
+          video.currentTime = reaction.start;
+          void video.play();
+        }
+      }}
+    />
+  );
+}
+
+function CompositionHistory({
+  compositions,
+  onRefresh,
+  onContinue,
+}: {
+  compositions: Composition[];
+  onRefresh: () => Promise<void>;
+  onContinue: (id: string) => void;
+}) {
+  const remove = async (item: Composition) => {
+    if (!window.confirm(`Excluir o projeto “${item.originalName}”?`)) return;
+    await fetch(`${API}/api/compositions/${item.id}`, { method: "DELETE" });
+    await onRefresh();
+  };
+
+  const retry = async (id: string) => {
+    await fetch(`${API}/api/compositions/${id}/retry`, { method: "POST" });
+    await onRefresh();
+  };
+
+  return (
+    <section className="history-page">
+      <div className="history-heading">
+        <div>
+          <span className="eyebrow"><Clock3 size={14} /> Histórico local</span>
+          <h1>Vídeos gerados</h1>
+          <p>Todos os projetos ficam salvos neste computador para assistir e baixar novamente.</p>
+        </div>
+        <span className="history-total">{compositions.length} projetos</span>
+      </div>
+
+      {compositions.length ? (
+        <div className="composition-grid">
+          {compositions.map((item) => (
+            <article className="composition-card" key={item.id}>
+              <div className="composition-media">
                 {item.status === "completed" && item.outputUrl ? (
-                  <a className="history-download" href={`${API}${item.outputUrl}`} download>
-                    <Download size={15} /> Baixar
-                  </a>
-                ) : item.status === "failed" ? (
-                  <button className="status-label failed retry" onClick={() => void retry(item.id)}>
-                    Tentar novamente
-                  </button>
+                  <video src={`${API}${item.outputUrl}`} controls playsInline preload="metadata" />
                 ) : (
-                  <span className={`status-label ${item.status}`}>{item.progress}%</span>
-                )}
-                {item.status !== "processing" && item.status !== "queued" && (
-                  <button className="icon-button small" onClick={() => void remove(item)} aria-label="Excluir projeto">
-                    <Trash2 size={15} />
-                  </button>
+                  <div className="composition-placeholder">
+                    {item.status === "ready" ? <WandSparkles size={29} /> : <LoaderCircle className={item.status === "processing" ? "spin" : ""} size={29} />}
+                    <strong>{item.status === "ready" ? "Pronto para posicionar" : item.step}</strong>
+                    {item.status === "processing" || item.status === "queued" ? <span>{item.progress}%</span> : null}
+                  </div>
                 )}
               </div>
-            ))}
-          </div>
-        </section>
+              <div className="composition-card-body">
+                <span className={`status-label ${item.status}`}>
+                  {item.status === "completed" ? "Concluído" :
+                    item.status === "ready" ? "Aguardando posição" :
+                    item.status === "failed" ? "Falhou" : "Processando"}
+                </span>
+                <h2>{item.originalName}</h2>
+                <p>{item.selectedReactionName ? `Reação: ${item.selectedReactionName}` : item.error || item.step}</p>
+                <div className="composition-card-actions">
+                  {item.status === "completed" && item.outputUrl ? (
+                    <a href={`${API}${item.outputUrl}`} download>
+                      <Download size={15} /> Baixar
+                    </a>
+                  ) : item.status === "ready" ? (
+                    <button onClick={() => onContinue(item.id)}>
+                      <ChevronRight size={15} /> Posicionar e gerar
+                    </button>
+                  ) : item.status === "failed" ? (
+                    <button onClick={() => void retry(item.id)}>
+                      <LoaderCircle size={15} /> Tentar novamente
+                    </button>
+                  ) : (
+                    <span>{item.progress}%</span>
+                  )}
+                  {item.status !== "processing" && item.status !== "queued" && (
+                    <button className="delete-history" onClick={() => void remove(item)} aria-label="Excluir projeto">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="library-empty">
+          <span><Film size={31} /></span>
+          <h2>Nenhum vídeo gerado ainda</h2>
+          <p>Os próximos resultados aparecerão aqui e continuarão disponíveis após atualizar a página.</p>
+        </div>
       )}
-    </>
+    </section>
   );
 }
 

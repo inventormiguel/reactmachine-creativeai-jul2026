@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import multer from "multer";
+import { createProxyMiddleware } from "http-proxy-middleware";
 import {
   CompositionRow,
   DATA_ROOT,
@@ -19,7 +20,7 @@ import { composeReel, regenerateComposition } from "./composer";
 import { processVideo } from "./processor";
 
 const app = express();
-const port = Number(process.env.REACTION_ENGINE_PORT || 8788);
+const port = Number(process.env.PORT || process.env.REACTION_ENGINE_PORT || 8788);
 
 app.use(cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"] }));
 app.use(express.json({ limit: "1mb" }));
@@ -65,10 +66,16 @@ function serializeComposition(row: CompositionRow) {
     error: row.error,
     selectedReactionId: row.selected_reaction_id,
     selectedReactionName: row.reaction_name || null,
+    selectedReactionEmotion: row.reaction_emotion || null,
     selectionReason: row.selection_reason,
     positionX: row.position_x,
     positionY: row.position_y,
+    reactionScale: row.reaction_scale,
     outputUrl: mediaUrl(row.output_path),
+    originalUrl: mediaUrl(row.original_path),
+    reactionUrl: mediaUrl(row.reaction_file_path || null),
+    reactionStart: row.reaction_start_time ?? null,
+    reactionEnd: row.reaction_end_time ?? null,
     createdAt: row.created_at,
   };
 }
@@ -96,7 +103,10 @@ app.get("/api/videos", (_request, response) => {
 app.get("/api/compositions", (_request, response) => {
   const rows = db
     .prepare(
-      `SELECT c.*, r.name AS reaction_name
+      `SELECT c.*, r.name AS reaction_name, r.emotion AS reaction_emotion,
+              r.file_path AS reaction_file_path,
+              r.start_time AS reaction_start_time,
+              r.end_time AS reaction_end_time
        FROM compositions c
        LEFT JOIN reactions r ON r.id = c.selected_reaction_id
        ORDER BY c.created_at DESC
@@ -125,8 +135,12 @@ app.post("/api/compositions", upload.single("video"), (request, response) => {
   const id = randomUUID();
   const requestedX = Number(request.body.positionX);
   const requestedY = Number(request.body.positionY);
+  const requestedScale = Number(request.body.reactionScale);
   const positionX = Number.isFinite(requestedX) ? Math.max(0, Math.min(1, requestedX)) : 1;
   const positionY = Number.isFinite(requestedY) ? Math.max(0, Math.min(1, requestedY)) : 1;
+  const reactionScale = Number.isFinite(requestedScale)
+    ? Math.max(0.18, Math.min(0.62, requestedScale))
+    : 0.34;
   const extension = path.extname(request.file.originalname) || ".video";
   const compositionDir = path.join(STORAGE_ROOT, "compositions", id);
   fs.mkdirSync(compositionDir, { recursive: true });
@@ -135,10 +149,10 @@ app.post("/api/compositions", upload.single("video"), (request, response) => {
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO compositions
-     (id, original_name, original_path, position_x, position_y,
+     (id, original_name, original_path, position_x, position_y, reaction_scale,
       status, progress, step, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'queued', 3, 'Reels salvo no storage local', ?, ?)`,
-  ).run(id, request.file.originalname, originalPath, positionX, positionY, now, now);
+     VALUES (?, ?, ?, ?, ?, ?, 'queued', 3, 'Reels salvo no storage local', ?, ?)`,
+  ).run(id, request.file.originalname, originalPath, positionX, positionY, reactionScale, now, now);
   response.status(202).json({ id, status: "queued" });
   setImmediate(() => void composeReel(id));
 });
@@ -197,12 +211,66 @@ app.post("/api/compositions/:id/reaction", (request, response) => {
 
   db.prepare(
     `UPDATE compositions
-     SET status = 'queued', progress = 58, selected_reaction_id = ?,
+     SET status = 'ready', progress = 60, selected_reaction_id = ?,
          selection_reason = 'Reação escolhida manualmente pelo usuário.',
          output_path = NULL, step = ?, error = NULL, updated_at = ?
      WHERE id = ?`,
   ).run(
     reaction.id,
+    `Preparando a reação “${reaction.name}”`,
+    new Date().toISOString(),
+    composition.id,
+  );
+  response.json({ id: composition.id, status: "ready" });
+});
+
+app.post("/api/compositions/:id/render", (request, response) => {
+  const reactionId =
+    typeof request.body.reactionId === "string" ? request.body.reactionId.trim() : "";
+  const requestedX = Number(request.body.positionX);
+  const requestedY = Number(request.body.positionY);
+  const requestedScale = Number(request.body.reactionScale);
+  const positionX = Number.isFinite(requestedX) ? Math.max(0, Math.min(1, requestedX)) : 1;
+  const positionY = Number.isFinite(requestedY) ? Math.max(0, Math.min(1, requestedY)) : 1;
+  const reactionScale = Number.isFinite(requestedScale)
+    ? Math.max(0.18, Math.min(0.62, requestedScale))
+    : 0.34;
+  const composition = db
+    .prepare("SELECT id, status, selected_reaction_id FROM compositions WHERE id = ?")
+    .get(request.params.id) as {
+      id: string;
+      status: string;
+      selected_reaction_id: string | null;
+    } | undefined;
+  if (!composition) return response.status(404).json({ error: "Projeto não encontrado." });
+  if (composition.status === "processing" || composition.status === "queued") {
+    return response.status(409).json({ error: "Aguarde o processamento atual terminar." });
+  }
+  const selectedId = reactionId || composition.selected_reaction_id;
+  const reaction = db
+    .prepare(
+      `SELECT r.id, r.name
+       FROM reactions r JOIN videos v ON v.id = r.video_id
+       WHERE r.id = ? AND v.status = 'completed'`,
+    )
+    .get(selectedId) as { id: string; name: string } | undefined;
+  if (!reaction) return response.status(404).json({ error: "Reação não encontrada." });
+
+  const manuallyChanged = reaction.id !== composition.selected_reaction_id;
+  db.prepare(
+    `UPDATE compositions
+     SET status = 'queued', progress = 60, selected_reaction_id = ?,
+         selection_reason = CASE WHEN ? THEN 'Reação escolhida manualmente pelo usuário.'
+                                 ELSE selection_reason END,
+         position_x = ?, position_y = ?, reaction_scale = ?, output_path = NULL,
+         step = ?, error = NULL, updated_at = ?
+     WHERE id = ?`,
+  ).run(
+    reaction.id,
+    manuallyChanged ? 1 : 0,
+    positionX,
+    positionY,
+    reactionScale,
     `Preparando a reação “${reaction.name}”`,
     new Date().toISOString(),
     composition.id,
@@ -424,6 +492,16 @@ app.delete("/api/reactions/:id", (request, response) => {
   response.status(204).end();
 });
 
+if (process.env.NODE_ENV === "production") {
+  app.use(
+    createProxyMiddleware({
+      target: "http://127.0.0.1:3000",
+      changeOrigin: false,
+      ws: true,
+    }),
+  );
+}
+
 app.use(
   (
     error: Error,
@@ -435,6 +513,6 @@ app.use(
   },
 );
 
-app.listen(port, "127.0.0.1", () => {
+app.listen(port, process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1", () => {
   console.log(`Reaction engine ready at http://localhost:${port}`);
 });

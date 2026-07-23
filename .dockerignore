@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+.venv
+node_modules
+data
+dist
+.vinext
+.wrangler
+*.log
+*.tsbuildinfo
+.DS_Store

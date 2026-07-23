@@ -13,6 +13,7 @@ Aplicação web local que cria vídeos verticais com uma reação sobreposta.
 - Áudio original do Reels preservado; reação sem áudio.
 - Troca manual da reação e nova geração do vídeo.
 - Armazenamento local em SQLite e no sistema de arquivos.
+- Preview fiel ao resultado final, com posição e tamanho ajustáveis.
 
 ## Requisitos
 
@@ -37,6 +38,12 @@ npm run dev
 ```
 
 Abra [http://localhost:3000](http://localhost:3000).
+
+## Railway
+
+O projeto inclui uma imagem Docker com Node.js, Python, FFmpeg e o modelo de
+remoção de fundo. No Railway, configure `OPENAI_API_KEY` e anexe um volume
+persistente em `/data`. O navegador e a API são publicados no mesmo domínio.
 
 ## Dados locais
 
