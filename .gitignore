@@ -1,0 +1,15 @@
+.env
+.env.local
+.venv/
+__pycache__/
+*.pyc
+data/
+node_modules/
+.next/
+dist/
+build/
+.vinext/
+.wrangler/
+*.tsbuildinfo
+.DS_Store
+*.log
