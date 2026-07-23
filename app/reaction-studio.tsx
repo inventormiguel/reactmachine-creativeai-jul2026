@@ -24,6 +24,15 @@ const API =
   (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
     ? "http://localhost:8788"
     : "";
+const CLOUD_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
+
+function uploadTooLarge(file: File) {
+  return API === "" && file.size > CLOUD_UPLOAD_LIMIT_BYTES;
+}
+
+function uploadLimitMessage() {
+  return "Este arquivo passa de 100 MB. Compacte o vídeo antes de enviar ao Railway e tente novamente.";
+}
 
 type VideoJob = {
   id: string;
@@ -126,6 +135,10 @@ export default function ReactionStudio() {
     if (!file) return;
     if (!file.type.startsWith("video/")) {
       setError("Escolha um ficheiro de vídeo válido.");
+      return;
+    }
+    if (uploadTooLarge(file)) {
+      setError(uploadLimitMessage());
       return;
     }
     setSelectedFile(file);
@@ -499,6 +512,10 @@ function ReelComposer({
     if (!file) return;
     if (!file.type.startsWith("video/")) {
       setError("Escolha um arquivo de vídeo válido.");
+      return;
+    }
+    if (uploadTooLarge(file)) {
+      setError(uploadLimitMessage());
       return;
     }
     setSelectedFile(file);

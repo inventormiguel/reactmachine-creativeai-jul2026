@@ -21,6 +21,10 @@ import { processVideo } from "./processor";
 
 const app = express();
 const port = Number(process.env.PORT || process.env.REACTION_ENGINE_PORT || 8788);
+const maxUploadBytes = Number(
+  process.env.MAX_UPLOAD_BYTES ||
+    (process.env.RAILWAY_ENVIRONMENT ? 100 * 1024 * 1024 : 2 * 1024 * 1024 * 1024),
+);
 
 app.use(cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"] }));
 app.use(express.json({ limit: "1mb" }));
@@ -28,7 +32,7 @@ app.use("/media", express.static(STORAGE_ROOT, { fallthrough: false }));
 
 const upload = multer({
   dest: INCOMING_ROOT,
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
+  limits: { fileSize: maxUploadBytes },
   fileFilter(_request, file, callback) {
     if (!file.mimetype.startsWith("video/")) {
       callback(new Error("Envie um ficheiro de vídeo válido."));
@@ -509,6 +513,11 @@ app.use(
     response: express.Response,
     _next: express.NextFunction,
   ) => {
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+      return response.status(413).json({
+        error: "Este arquivo passa de 100 MB. Compacte o vídeo antes de enviar ao Railway.",
+      });
+    }
     response.status(400).json({ error: error.message || "Não foi possível processar o pedido." });
   },
 );

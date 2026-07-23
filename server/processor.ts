@@ -263,8 +263,11 @@ export async function processVideo(id: string) {
     );
 
     updateVideo(id, "processing", 28, "Removendo o fundo do vídeo mestre · 0%");
+    const localPython = path.resolve(process.cwd(), ".venv/bin/python");
+    const pythonCommand =
+      process.env.PYTHON_BIN || (fs.existsSync(localPython) ? localPython : "python3");
     await run(
-      path.resolve(process.cwd(), ".venv/bin/python"),
+      pythonCommand,
       [
         path.resolve(process.cwd(), "server/remove-background.py"),
         "--input",
@@ -377,6 +380,17 @@ export async function processVideo(id: string) {
 
     fs.rmSync(framesDir, { recursive: true, force: true });
     fs.rmSync(proxyPath, { force: true });
+    if (
+      process.env.RAILWAY_ENVIRONMENT &&
+      path.resolve(video.original_path) !== path.resolve(subjectMasterPath)
+    ) {
+      db.prepare("UPDATE videos SET original_path = ?, updated_at = ? WHERE id = ?").run(
+        subjectMasterPath,
+        new Date().toISOString(),
+        id,
+      );
+      fs.rmSync(video.original_path, { force: true });
+    }
     updateVideo(id, "completed", 100, `${cuts.length} reações salvas sem arquivos duplicados`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha inesperada no processamento.";
