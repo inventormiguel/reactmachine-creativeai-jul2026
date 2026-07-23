@@ -297,7 +297,7 @@ export default function ReactionStudio() {
                   <div className="selected-file">
                     <span className="file-icon"><Film size={25} /></span>
                     <div>
-                      <strong>{selectedFile.name}</strong>
+                      <strong title={selectedFile.name}>{selectedFile.name}</strong>
                       <small>{formatBytes(selectedFile.size)} · pronto para salvar</small>
                     </div>
                     <button
@@ -356,7 +356,7 @@ export default function ReactionStudio() {
                   <div className="process-preview">
                     <span><LoaderCircle className="spin" size={29} /></span>
                     <div>
-                      <strong>{activeJob.original_name}</strong>
+                      <strong title={activeJob.original_name}>{activeJob.original_name}</strong>
                       <small>{activeJob.step}</small>
                     </div>
                   </div>
@@ -424,7 +424,7 @@ export default function ReactionStudio() {
                         <LoaderCircle className="spin" size={17} />}
                     </span>
                     <div className="job-main">
-                      <strong>{job.original_name}</strong>
+                      <strong title={job.original_name}>{job.original_name}</strong>
                       <small>{job.error || job.step}</small>
                     </div>
                     <span className="job-duration">
@@ -650,7 +650,7 @@ function ReelComposer({
               <div className="selected-file">
                 <span className="file-icon"><Film size={25} /></span>
                 <div>
-                  <strong>{selectedFile.name}</strong>
+                  <strong title={selectedFile.name}>{selectedFile.name}</strong>
                   <small>{formatBytes(selectedFile.size)} · áudio original será mantido</small>
                 </div>
                 <button
@@ -698,7 +698,7 @@ function ReelComposer({
             <div className="composition-progress">
               <span className="result-icon"><LoaderCircle className="spin" size={30} /></span>
               <div className="eyebrow">Gerando agora</div>
-              <h2>{activeComposition.originalName}</h2>
+              <h2 title={activeComposition.originalName}>{activeComposition.originalName}</h2>
               <p>{activeComposition.step}</p>
               <div className="progress-meta">
                 <span>Processamento local</span>
@@ -713,7 +713,7 @@ function ReelComposer({
               <div className="result-heading">
                 <div>
                   <span className="eyebrow"><Sparkles size={14} /> Prévia antes de gerar</span>
-                  <h2>{readyComposition.originalName}</h2>
+                  <h2 title={readyComposition.originalName}>{readyComposition.originalName}</h2>
                 </div>
                 <span className="emotion-tag">{previewReaction?.name}</span>
               </div>
@@ -811,7 +811,7 @@ function ReelComposer({
               <div className="result-heading">
                 <div>
                   <span className="eyebrow"><Check size={14} /> Vídeo pronto</span>
-                  <h2>{completedComposition.originalName}</h2>
+                  <h2 title={completedComposition.originalName}>{completedComposition.originalName}</h2>
                 </div>
                 <span className="emotion-tag">{completedComposition.selectedReactionName}</span>
               </div>
@@ -949,7 +949,7 @@ function CompositionHistory({
                     item.status === "ready" ? "Aguardando posição" :
                     item.status === "failed" ? "Falhou" : "Processando"}
                 </span>
-                <h2>{item.originalName}</h2>
+                <h2 title={item.originalName}>{item.originalName}</h2>
                 <p>{item.selectedReactionName ? `Reação: ${item.selectedReactionName}` : item.error || item.step}</p>
                 <div className="composition-card-actions">
                   {item.status === "completed" && item.outputUrl ? (
