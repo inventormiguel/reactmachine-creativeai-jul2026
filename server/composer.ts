@@ -313,6 +313,8 @@ async function renderFinalVideo(
       job.original_path,
       "-stream_loop",
       "-1",
+      "-c:v",
+      "libvpx-vp9",
       "-i",
       reactionCutPath,
       "-filter_complex_threads",
