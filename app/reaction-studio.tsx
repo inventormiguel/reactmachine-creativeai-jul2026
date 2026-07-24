@@ -182,6 +182,10 @@ export default function ReactionStudio() {
         reaction.sourceName.toLowerCase().includes(query),
     );
   }, [reactions, search]);
+  const completedCompositions = useMemo(
+    () => compositions.filter((item) => item.status === "completed" && item.outputUrl),
+    [compositions],
+  );
 
   const activeJob = jobs.find((job) => job.status === "processing" || job.status === "queued");
 
@@ -217,7 +221,9 @@ export default function ReactionStudio() {
           >
             <Clock3 size={17} />
             Histórico
-            {compositions.length > 0 && <span className="count-pill">{compositions.length}</span>}
+            {completedCompositions.length > 0 && (
+              <span className="count-pill">{completedCompositions.length}</span>
+            )}
           </button>
           <button
             className={activeView === "reactions" ? "active" : ""}
@@ -252,12 +258,8 @@ export default function ReactionStudio() {
         />
       ) : activeView === "history" ? (
         <CompositionHistory
-          compositions={compositions}
+          compositions={completedCompositions}
           onRefresh={refresh}
-          onContinue={(id) => {
-            setFocusedCompositionId(id);
-            setActiveView("compose");
-          }}
         />
       ) : activeView === "reactions" ? (
         <>
@@ -729,7 +731,7 @@ function ReelComposer({
               )}
               <div className="placement-copy">
                 <strong>Arraste a reação para qualquer posição</strong>
-                <small>Saída vertical 9:16 · 1080 × 1920</small>
+                <small>Saída vertical 9:16 · 720 × 1280</small>
               </div>
               <div
                 ref={placementRef}
@@ -900,20 +902,13 @@ function PlacementReactionPlayer({ reaction }: { reaction: Reaction }) {
 function CompositionHistory({
   compositions,
   onRefresh,
-  onContinue,
 }: {
   compositions: Composition[];
   onRefresh: () => Promise<void>;
-  onContinue: (id: string) => void;
 }) {
   const remove = async (item: Composition) => {
     if (!window.confirm(`Excluir o projeto “${item.originalName}”?`)) return;
     await fetch(`${API}/api/compositions/${item.id}`, { method: "DELETE" });
-    await onRefresh();
-  };
-
-  const retry = async (id: string) => {
-    await fetch(`${API}/api/compositions/${id}/retry`, { method: "POST" });
     await onRefresh();
   };
 
@@ -933,45 +928,19 @@ function CompositionHistory({
           {compositions.map((item) => (
             <article className="composition-card" key={item.id}>
               <div className="composition-media">
-                {item.status === "completed" && item.outputUrl ? (
-                  <video src={`${API}${item.outputUrl}`} controls playsInline preload="metadata" />
-                ) : (
-                  <div className="composition-placeholder">
-                    {item.status === "ready" ? <WandSparkles size={29} /> : <LoaderCircle className={item.status === "processing" ? "spin" : ""} size={29} />}
-                    <strong>{item.status === "ready" ? "Pronto para posicionar" : item.step}</strong>
-                    {item.status === "processing" || item.status === "queued" ? <span>{item.progress}%</span> : null}
-                  </div>
-                )}
+                <video src={`${API}${item.outputUrl}`} controls playsInline preload="metadata" />
               </div>
               <div className="composition-card-body">
-                <span className={`status-label ${item.status}`}>
-                  {item.status === "completed" ? "Concluído" :
-                    item.status === "ready" ? "Aguardando posição" :
-                    item.status === "failed" ? "Falhou" : "Processando"}
-                </span>
+                <span className="status-label completed">Concluído</span>
                 <h2 title={item.originalName}>{item.originalName}</h2>
                 <p>{item.selectedReactionName ? `Reação: ${item.selectedReactionName}` : item.error || item.step}</p>
                 <div className="composition-card-actions">
-                  {item.status === "completed" && item.outputUrl ? (
-                    <a href={`${API}${item.outputUrl}`} download>
-                      <Download size={15} /> Baixar
-                    </a>
-                  ) : item.status === "ready" ? (
-                    <button onClick={() => onContinue(item.id)}>
-                      <ChevronRight size={15} /> Posicionar e gerar
-                    </button>
-                  ) : item.status === "failed" ? (
-                    <button onClick={() => void retry(item.id)}>
-                      <LoaderCircle size={15} /> Tentar novamente
-                    </button>
-                  ) : (
-                    <span>{item.progress}%</span>
-                  )}
-                  {item.status !== "processing" && item.status !== "queued" && (
-                    <button className="delete-history" onClick={() => void remove(item)} aria-label="Excluir projeto">
-                      <Trash2 size={15} />
-                    </button>
-                  )}
+                  <a href={`${API}${item.outputUrl}`} download>
+                    <Download size={15} /> Baixar
+                  </a>
+                  <button className="delete-history" onClick={() => void remove(item)} aria-label="Excluir projeto">
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               </div>
             </article>

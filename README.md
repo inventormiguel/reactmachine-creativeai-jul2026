@@ -9,7 +9,7 @@ Aplicação web local que cria vídeos verticais com uma reação sobreposta.
 - Análise visual com a API da OpenAI para identificar e nomear reações.
 - Análise de um Reels para escolher a reação mais adequada.
 - Posicionamento arrastável da reação.
-- Saída MP4 vertical 9:16 em 1080 × 1920.
+- Saída MP4 vertical 9:16 em 720 × 1280, otimizada para processamento em nuvem.
 - Áudio original do Reels preservado; reação sem áudio.
 - Troca manual da reação e nova geração do vídeo.
 - Armazenamento local em SQLite e no sistema de arquivos.

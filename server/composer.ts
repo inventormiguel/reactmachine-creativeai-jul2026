@@ -25,7 +25,7 @@ function run(command: string, args: string[], onLine?: (line: string) => void) {
     let output = "";
     const consume = (chunk: Buffer) => {
       const text = chunk.toString();
-      output += text;
+      output = `${output}${text}`.slice(-16_000);
       for (const line of text.split(/\r?\n/)) {
         if (line) onLine?.(line);
       }
@@ -33,9 +33,13 @@ function run(command: string, args: string[], onLine?: (line: string) => void) {
     child.stdout.on("data", consume);
     child.stderr.on("data", consume);
     child.on("error", reject);
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (code === 0) resolve();
-      else reject(new Error(output.trim() || `${command} terminou com código ${code}`));
+      else {
+        const reason = signal ? `sinal ${signal}` : `código ${code}`;
+        const details = output.trim();
+        reject(new Error(`${command} terminou com ${reason}${details ? `\n${details}` : ""}`));
+      }
     });
   });
 }
@@ -281,8 +285,8 @@ async function renderFinalVideo(
     reactionCutPath,
   ]);
 
-  const outputWidth = 1080;
-  const outputHeight = 1920;
+  const outputWidth = 720;
+  const outputHeight = 1280;
   const reactionInfo = await probeVideo(reaction.file_path);
   const safeScale = Math.max(0.18, Math.min(0.62, job.reaction_scale || 0.34));
   const overlayHeight = Math.round((outputHeight * safeScale) / 2) * 2;
@@ -307,16 +311,17 @@ async function renderFinalVideo(
       "-nostats",
       "-i",
       job.original_path,
-      "-c:v",
-      "libvpx-vp9",
       "-stream_loop",
       "-1",
       "-i",
       reactionCutPath,
+      "-filter_complex_threads",
+      "1",
       "-filter_complex",
-      `[0:v]scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=increase:` +
-        `flags=lanczos,crop=${outputWidth}:${outputHeight},setsar=1[base];` +
-        `[1:v]scale=${overlayWidth}:${overlayHeight}:flags=lanczos,format=rgba[reaction];` +
+      `[0:v]crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)':` +
+        `x='(iw-ow)/2':y='(ih-oh)/2',` +
+        `scale=${outputWidth}:${outputHeight}:flags=fast_bilinear,setsar=1[base];` +
+        `[1:v]scale=${overlayWidth}:${overlayHeight}:flags=fast_bilinear,format=rgba[reaction];` +
         `[base][reaction]overlay=${overlayX}:${overlayY}:format=auto:shortest=1[v]`,
       "-map",
       "[v]",
@@ -325,15 +330,17 @@ async function renderFinalVideo(
       "-c:v",
       "libx264",
       "-preset",
-      "veryfast",
+      "ultrafast",
       "-crf",
-      "21",
+      "23",
+      "-threads",
+      "1",
       "-pix_fmt",
       "yuv420p",
       "-c:a",
       "aac",
       "-b:a",
-      "128k",
+      "96k",
       "-movflags",
       "+faststart",
       "-shortest",
@@ -475,7 +482,7 @@ export async function composeReel(id: string) {
     fs.rmSync(reactionFramesDir, { recursive: true, force: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha inesperada ao gerar o Reels.";
-    updateComposition(id, "failed", 100, "Não foi possível gerar o vídeo", message.slice(0, 1000));
+    updateComposition(id, "failed", 100, "Não foi possível gerar o vídeo", message.slice(-1000));
   }
 }
 
@@ -508,6 +515,6 @@ export async function regenerateComposition(id: string, reactionId: string) {
     await renderFinalVideo(id, job, reaction, info, outputPath, reactionCutPath);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao trocar a reação.";
-    updateComposition(id, "failed", 100, "Não foi possível gerar o vídeo", message.slice(0, 1000));
+    updateComposition(id, "failed", 100, "Não foi possível gerar o vídeo", message.slice(-1000));
   }
 }
